@@ -119,22 +119,37 @@ When the agent is done:
 }
 ```
 
-## Tools
+## Essential Tools (18 Curated Tools)
 
-| Tool | What it does |
-|---|---|
-| `browser_start_session` | Opens a window for a session (optional, other tools do this automatically) |
-| `browser_close_session` | Closes the session and its window |
-| `browser_list_sessions` | Lists active sessions |
-| `browser_navigate` | Goes to a URL |
-| `browser_snapshot` | Returns the page's accessibility tree and text |
-| `browser_click` | Clicks an element |
-| `browser_type` | Types into a field |
-| `browser_evaluate` | Runs JavaScript on the page |
-| `browser_tabs` | Lists, opens, selects, or closes tabs in the session's window |
-| `browser_run_action` | Runs any other Playwright tool (`browser_wait_for`, `browser_hover`, `browser_press_key`, ...) |
+Every tool accepts `session_id` to route commands to its dedicated Chrome window.
 
-All tools except `browser_list_sessions` take a `session_id`.
+| Tool | Category | What it does | Key Parameters |
+|---|---|---|---|
+| `browser_start_session` | Session | Explicitly opens a dedicated window for an agent session (optional; tools auto-start if needed). | `session_id` |
+| `browser_close_session` | Session | Terminates the agent's Playwright process and cleanly closes its physical Chrome window. | `session_id` |
+| `browser_list_sessions` | Session | Lists all currently active agent sessions and window statuses. | *(none)* |
+| `browser_navigate` | Navigation | Navigates the current tab to a specified URL. | `url`, `include_snapshot` |
+| `browser_navigate_back` | Navigation | Goes back to the previous page in history. | `include_snapshot` |
+| `browser_tabs` | Navigation | Lists, opens, selects, or closes tabs strictly inside the agent's dedicated window. | `action` (`"list"`, `"new"`, `"close"`, `"select"`), `index` |
+| `browser_snapshot` | Visual | Captures the page's accessibility tree, text, and interactive element references (`ref`). | `depth` |
+| `browser_take_screenshot` | Visual | Captures a PNG screenshot of the page or target element. | `target` / `ref`, `fullPage` |
+| `browser_click` | Interaction | Clicks an element. Supports long-press and composite snapshots. | `target` / `ref`, `delay` (ms hold), `doubleClick`, `button`, `include_snapshot` |
+| `browser_type` | Interaction | Fills or types text into an input or contenteditable element. | `target` / `ref`, `text`, `submit`, `include_snapshot` |
+| `browser_press_key` | Interaction | Presses a keyboard key (e.g. `Enter`, `Escape`, `ArrowDown`, `Tab`). | `key`, `include_snapshot` |
+| `browser_hover` | Interaction | Hovers the mouse cursor over an element. | `target` / `ref`, `include_snapshot` |
+| `browser_select_option` | Interaction | Selects one or more options in a `<select>` dropdown. | `target` / `ref`, `values`, `include_snapshot` |
+| `browser_handle_dialog` | Dialogs | Accepts or dismisses JavaScript `alert`, `confirm`, or `prompt` dialogs. | `accept`, `prompt_text` / `promptText`, `include_snapshot` |
+| `browser_file_upload` | Files | Uploads local files into an active file chooser dialog. | `paths` |
+| `browser_wait_for` | Sync | Waits for text, an element selector, or a time delay. | `text`, `target` / `ref`, `time`, `include_snapshot` |
+| `browser_evaluate` | Scripting | Evaluates a JavaScript function expression in the page context. | `function`, `target` / `ref` |
+| `browser_run_action` | Escape Hatch | Dynamic safety-valve to invoke any other native Playwright MCP tool. | `action_name`, `args`, `include_snapshot` |
+
+### High-Performance Capabilities
+
+- **Inline Snapshots (`include_snapshot: true`)**: Pass `include_snapshot: true` to any interaction tool (`browser_click`, `browser_type`, `browser_press_key`, `browser_navigate`, `browser_handle_dialog`). The response immediately includes the post-action accessibility tree, cutting tool roundtrips and latency by 50%.
+- **Native Press-and-Hold (`delay`)**: Pass `delay: 1000` to `browser_click` to hold the mouse button down for 1 second before releasing. No manual mouse down/up scripting required.
+- **Background Automation Support**: Windows can remain completely hidden or occluded behind other apps without stalling. Background layout stability checks execute instantly without requestAnimationFrame occlusion freezes.
+- **Unified Element References**: Both `ref` (e.g. `ref: "e42"`) and `target` (e.g. `target: "#submit-btn"`) are accepted interchangeably across all tools.
 
 ## Dashboard
 

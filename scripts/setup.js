@@ -11,6 +11,8 @@
 const path = require('path');
 const { execSync } = require('child_process');
 
+const rootDir = path.resolve(__dirname, '..');
+
 console.log('\n================================================================');
 console.log('   Playwright MCP Extension: Universal Automated Setup');
 console.log('================================================================\n');
@@ -18,7 +20,7 @@ console.log('================================================================\n'
 // 1. Register global command with npm link
 console.log('>>> [1/3] Registering global command "playwright-mcp-extension"...');
 try {
-  execSync('npm link --force', { cwd: __dirname, stdio: 'inherit' });
+  execSync('npm link --force', { cwd: rootDir, stdio: 'inherit' });
   console.log('✓ Successfully registered global command: "playwright-mcp-extension"');
 } catch (err) {
   console.warn('! Note during npm link (will continue):', err.message);
@@ -27,7 +29,7 @@ try {
 // 2. Patch playwright-core
 console.log('\n>>> [2/3] Patching playwright-core for window isolation...');
 try {
-  const patcher = require('./patcher');
+  const patcher = require('../src/patcher');
   patcher();
   console.log('✓ playwright-core verified and patched.');
 } catch (err) {
@@ -37,7 +39,7 @@ try {
 // 3. Build the extension package
 console.log('\n>>> [3/3] Building browser extension package...');
 try {
-  execSync('npm run build:extension', { cwd: __dirname, stdio: 'inherit' });
+  execSync('npm run build:extension', { cwd: rootDir, stdio: 'inherit' });
   console.log('✓ Extension built successfully in extension/dist/');
 } catch (err) {
   console.warn('! Note during extension build:', err.message);
@@ -49,7 +51,7 @@ console.log('================================================================\n'
 
 console.log('Next Steps:\n');
 console.log('1. Load the unpacked extension in Chrome / Edge / Brave:');
-console.log('   Path: ' + path.resolve(__dirname, 'extension', 'dist'));
+console.log('   Path: ' + path.resolve(rootDir, 'extension', 'dist'));
 console.log('   (Navigate to chrome://extensions -> enable "Developer mode" -> click "Load unpacked")\n');
 console.log('2. Open the extension control center in your browser:');
 console.log('   chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/manage.html');

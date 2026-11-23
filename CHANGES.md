@@ -1,6 +1,28 @@
 # Playwright MCP Extension: Changelog & Architecture Guide
 
-This document details the motivations, architectural overhaul, and code-level modifications implemented in this fork of `@playwright/mcp`. It is written for developers and engineers integrating or extending multi-agent browser automation.
+## Latest Release: Interaction & Background Automation Improvements (v1.2.0)
+
+This update delivers four major enhancements for multi-agent browser automation:
+
+### 1. Native Long-Press & Press-and-Hold Support (`delay` in `browser_click`)
+- **What was added**: `delay` parameter (in milliseconds) added directly to `browser_click`.
+- **How it works**: Forwards `delay` directly to Playwright's `locator.click({ delay })`, keeping the mouse button held between `mousedown` and `mouseup`.
+- **Why it matters**: Eliminates the need for low-level manual `mouse.down` / `mouse.up` script workarounds for hold interactions (e.g., long-press buttons, sliders, drag initiations).
+- **Timeout scaling**: Automatically scales the Playwright action timeout (`Math.max(20000, delay + 10000)`) so hold actions never hit a premature 5s timeout wall.
+
+### 2. Promoted `browser_handle_dialog` to First-Class Tool
+- **What was added**: `browser_handle_dialog` is now directly exposed in the curated essential toolset (18 tools total).
+- **Features**: Supports `accept: boolean` and both `promptText` and `prompt_text` (convenience snake_case alias) for prompt dialogs.
+- **Why it matters**: Agents no longer need to use the `browser_run_action` escape hatch to accept or dismiss `alert`, `confirm`, and `prompt` dialogs.
+
+### 3. Inline Page Snapshots (`include_snapshot: true`)
+- **What was added**: `include_snapshot: boolean` parameter added to all interaction tools (`browser_click`, `browser_type`, `browser_press_key`, `browser_hover`, `browser_select_option`, `browser_navigate`, `browser_navigate_back`, `browser_wait_for`, `browser_handle_dialog`, `browser_run_action`).
+- **How it works**: When set to `true`, the multiplexer immediately captures the post-action accessibility tree snapshot and appends it to the action response.
+- **Performance Impact**: Cuts agent tool turns and roundtrip latency in half—agents get the updated UI state instantly after every click, navigation, or keystroke without needing a separate `browser_snapshot` turn.
+
+### 4. Background Window Occlusion Throttling Fix (`_checkElementIsStable`)
+- **The Problem**: When Chrome windows are hidden, minimized, or occluded behind other apps on Windows, Chromium puts the tab in `visibilityState === 'hidden'` and throttles/suspends `requestAnimationFrame`. Clamped background timers (`setTimeout` clamped to 1000ms) caused Playwright's `_checkElementIsStable` to exceed action timeouts.
+- **The Fix**: Patched `_checkElementIsStable` in `coreBundle.js` via `patcher.js` to immediately return `true` when `document.hidden` is `true`. When a tab is in the background, layout is already static; bypassing RAF polling allows background clicks to execute in under 50ms without stalling.
 
 ---
 
@@ -162,12 +184,39 @@ Transform `@playwright/mcp` into an enterprise-grade **multi-agent browser multi
 
 ---
 
+### F. Curated Essential Toolset & Soft Error Handling (`tools.js`, `index.js`)
+
+1. **Pruned Fluff down to the 18 Essential Tools**:
+   - Instead of exposing all 25 native tools (which introduced schema bloat), pruned the tools to a high-performance **18-tool set** (14 core native actions + 4 session management / safety tools):
+     - **Session Control**: `browser_start_session`, `browser_close_session`, `browser_list_sessions`
+     - **Navigation**: `browser_navigate`, `browser_navigate_back`, `browser_tabs`
+     - **Visual & Inspection**: `browser_snapshot`, `browser_take_screenshot`
+     - **Interaction**: `browser_click` (with `delay`), `browser_type`, `browser_press_key`, `browser_hover`, `browser_select_option`
+     - **Dialogs**: `browser_handle_dialog` (promoted first-class tool for alert, confirm, and prompt)
+     - **Execution & Files**: `browser_wait_for`, `browser_evaluate`, `browser_file_upload`
+     - **Escape Hatch**: `browser_run_action` (retained for invoking any unexposed native tool if ever required)
+   - Injected `session_id` into every native tool schema to ensure multi-agent window multiplexing works natively across all tools.
+   - Added `include_snapshot: true` support to return accessibility tree directly in action responses.
+   - Added automatic alias resolution for `ref` -> `target` and `prompt_text` -> `promptText` to ensure backward and forward compatibility.
+   - Added sensible defaults for strict required arguments (e.g. `scale: 'css'` for screenshots).
+
+2. **MCP Soft Error Handling**:
+   - Replaced raw JSON-RPC `-32603` protocol exceptions with MCP-compliant `{ isError: true, content: [{ type: 'text', text: ... }] }` responses.
+   - Prevents AI clients (Antigravity, Claude, Cursor) from aborting the conversation turn on element not found, page timeout, or navigation errors.
+
+3. **Graceful Session Teardown**:
+   - In `browser_close_session` and `browser_close`, the multiplexer now dispatches `browser_close` to the child Playwright process first before stopping the session. This guarantees Chrome immediately releases the physical desktop window rather than leaving an orphaned empty window.
+
+---
+
 ## 4. Summary of Modified & Added Files
 
 | File | Type | Changes Made |
 |---|---|---|
-| `index.js` | Server | Added Primary/Satellite multiplexer, removed fatal `process.exit(1)`, added `/ping` failover watcher, trimmed environment variables. |
-| `patcher.js` | Build / Hook | Automated `playwright-core` patching to route window creation through port 45454. |
+| `index.js` | Server | Integrated `tools.js`, added graceful teardown via `browser_close`, added MCP soft error handling, parameter normalization, and `include_snapshot` inline aggregation. |
+| `tools.js` | Tools | Curated 18 essential tools with injected `session_id`, `delay` in click, `browser_handle_dialog`, parameter aliases, and `include_snapshot` support. |
+| `native_tools.json` | Schemas | Complete upstream native tool schemas extracted from `@playwright/mcp`. |
+| `patcher.js` | Build / Hook | Automated `playwright-core` patching: port 45454 routing, `delay` parameter forwarding, timeout scaling, and background window RAF bypass. |
 | `setup.js` | Build / CLI | 1-click cross-platform setup script (`npm run setup`). |
 | `extension/src/clientSession.ts` | Extension | Replaced `chrome.windows.create` with `chrome.tabs.create({ windowId })` for window confinement. |
 | `extension/src/connectionBroker.ts` | Extension | Added background session pruning (`_pruneDeadSessions()`). |
@@ -175,5 +224,5 @@ Transform `@playwright/mcp` into an enterprise-grade **multi-agent browser multi
 | `extension/src/ui/manage.css` | Styling | Fixed token truncation with `break-all` and `overflow-wrap: anywhere`. |
 | `extension/src/ui/authToken.tsx` | UI | Fixed token display and copying without prepended key string. |
 | `extension/src/ui/authToken.css` | Styling | Added multi-line wrapping and text selection. |
-| `README.md` | Docs | Universal 1-liner install, architecture diagrams, GUI bot instructions. |
+| `README.md` | Docs | Universal 1-liner install, architecture diagrams, 18-tool reference, GUI bot instructions. |
 | `CHANGES.md` | Docs | Comprehensive technical changelog and architectural reference. |

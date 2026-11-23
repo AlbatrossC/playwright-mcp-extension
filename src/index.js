@@ -190,7 +190,12 @@ class PlaywrightSession {
       const profile = (process.env.PLAYWRIGHT_CHROME_PROFILE || 'Default').trim();
       const browser = (process.env.PLAYWRIGHT_BROWSER || 'chrome').trim();
 
-      const cliPath = path.join(__dirname, 'node_modules', '@playwright', 'mcp', 'cli.js');
+      let cliPath;
+      try {
+        cliPath = require.resolve('@playwright/mcp/cli.js', { paths: [__dirname, path.join(__dirname, '..')] });
+      } catch (_) {
+        cliPath = path.join(__dirname, '..', 'node_modules', '@playwright', 'mcp', 'cli.js');
+      }
       const args = [
         cliPath,
         '--extension',
@@ -411,192 +416,9 @@ async function getSession(sessionId) {
   return session;
 }
 
-// Tool definitions exposed to the AI agent / MCP client
-const TOOLS = [
-  {
-    name: 'browser_start_session',
-    description: 'Explicitly start a dedicated browser window for an agent session. (Optional: other browser tools will auto-start the session if not already running).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique identifier for this agent session or task (e.g. "agent-1", "researcher", "data-extractor"). Each unique session gets its own dedicated Chrome window.'
-        }
-      },
-      required: ['session_id']
-    }
-  },
-  {
-    name: 'browser_close_session',
-    description: 'Close an agent session, terminating its dedicated Playwright MCP process and releasing its Chrome window.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'The session identifier to terminate.'
-        }
-      },
-      required: ['session_id']
-    }
-  },
-  {
-    name: 'browser_list_sessions',
-    description: 'List all currently active agent browser sessions and their status.',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'browser_navigate',
-    description: 'Navigate to a URL inside the dedicated Chrome window for the given session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID. Each agent must use its own session_id to stay in its own dedicated window.'
-        },
-        url: {
-          type: 'string',
-          description: 'The URL to navigate to.'
-        }
-      },
-      required: ['session_id', 'url']
-    }
-  },
-  {
-    name: 'browser_snapshot',
-    description: 'Capture a page snapshot (accessibility tree and content) of the dedicated window for session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID.'
-        }
-      },
-      required: ['session_id']
-    }
-  },
-  {
-    name: 'browser_click',
-    description: 'Click an element on the active page of the dedicated window for session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID.'
-        },
-        element: {
-          type: 'string',
-          description: 'The element description or selector to click.'
-        },
-        ref: {
-          type: 'string',
-          description: 'The element reference from snapshot.'
-        }
-      },
-      required: ['session_id']
-    }
-  },
-  {
-    name: 'browser_type',
-    description: 'Type text into an element in the dedicated window for session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID.'
-        },
-        text: {
-          type: 'string',
-          description: 'The text to type.'
-        },
-        element: {
-          type: 'string',
-          description: 'The element description or selector.'
-        },
-        ref: {
-          type: 'string',
-          description: 'The element reference from snapshot.'
-        }
-      },
-      required: ['session_id', 'text']
-    }
-  },
-  {
-    name: 'browser_evaluate',
-    description: 'Evaluate JavaScript code on the active page of the dedicated window for session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID.'
-        },
-        function: {
-          type: 'string',
-          description: 'JavaScript function or expression to execute.'
-        }
-      },
-      required: ['session_id', 'function']
-    }
-  },
-  {
-    name: 'browser_tabs',
-    description: 'List, create, or switch tabs inside the dedicated Chrome window for session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID.'
-        },
-        action: {
-          type: 'string',
-          enum: ['list', 'new', 'close', 'select'],
-          description: 'Operation to perform.'
-        },
-        url: {
-          type: 'string',
-          description: 'URL when opening a new tab.'
-        },
-        index: {
-          type: 'number',
-          description: 'Tab index for select or close.'
-        }
-      },
-      required: ['session_id', 'action']
-    }
-  },
-  {
-    name: 'browser_run_action',
-    description: 'Execute ANY native Playwright MCP tool (e.g. browser_wait_for, browser_press_key, browser_hover, browser_drag, etc.) on session_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Unique agent session ID.'
-        },
-        action_name: {
-          type: 'string',
-          description: 'The native tool name (e.g. "browser_wait_for", "browser_press_key", "browser_hover", "browser_fill_form").'
-        },
-        args: {
-          type: 'object',
-          description: 'Arguments object for the tool.'
-        }
-      },
-      required: ['session_id', 'action_name']
-    }
-  }
-];
+// Tool definitions exposed to the AI agent / MCP client (all native + multiplexer tools)
+const { ALL_TOOLS, normalizeToolArgs } = require('./tools');
+const TOOLS = ALL_TOOLS;
 
 // Handle incoming MCP request
 async function handleMcpRequest(req) {
@@ -667,6 +489,12 @@ async function handleMcpRequest(req) {
       }
       const session = SESSIONS.get(sessionId);
       if (session) {
+        try {
+          await Promise.race([
+            session.callTool('browser_close', {}),
+            new Promise(r => setTimeout(r, 2000))
+          ]);
+        } catch (_) {}
         session.stop();
         return {
           jsonrpc: '2.0',
@@ -717,12 +545,29 @@ async function handleMcpRequest(req) {
     }
 
     const sessionId = args.session_id || 'default';
-    const session = await getSession(sessionId);
+    let session;
+    try {
+      session = await getSession(sessionId);
+    } catch (err) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Failed to initialize session "${sessionId}": ${err.message}`
+            }
+          ]
+        }
+      };
+    }
 
     // Forward to dedicated Playwright MCP session
     let targetTool = name;
-    let targetArgs = { ...args };
-    delete targetArgs.session_id;
+    let targetArgs = normalizeToolArgs(name, args);
+    const wantSnapshot = Boolean((args.include_snapshot || args.args?.include_snapshot) && targetTool !== 'browser_snapshot');
 
     if (name === 'browser_run_action') {
       if (!args.action_name || typeof args.action_name !== 'string' || !args.action_name.startsWith('browser_')) {
@@ -736,15 +581,60 @@ async function handleMcpRequest(req) {
         };
       }
       targetTool = args.action_name;
-      targetArgs = args.args || {};
+      targetArgs = normalizeToolArgs(targetTool, args.args || {});
     }
 
-    const result = await session.callTool(targetTool, targetArgs);
-    return {
-      jsonrpc: '2.0',
-      id,
-      result
-    };
+    const timeout = typeof args.timeout_ms === 'number' ? args.timeout_ms : 60000;
+    delete targetArgs.timeout_ms;
+
+    try {
+      const result = await session.callTool(targetTool, targetArgs, timeout);
+
+      // If the browser was closed, also release the session cleanly
+      if (targetTool === 'browser_close') {
+        session.stop();
+      }
+
+      // If include_snapshot was requested and action succeeded, fetch & append snapshot
+      if (wantSnapshot && !result.isError && targetTool !== 'browser_close') {
+        try {
+          const snapResult = await session.callTool('browser_snapshot', {});
+          if (snapResult && Array.isArray(snapResult.content)) {
+            if (!Array.isArray(result.content)) {
+              result.content = [];
+            }
+            result.content.push(...snapResult.content);
+          }
+        } catch (snapErr) {
+          if (Array.isArray(result.content)) {
+            result.content.push({
+              type: 'text',
+              text: `\n[Warning: include_snapshot failed: ${snapErr.message}]`
+            });
+          }
+        }
+      }
+
+      return {
+        jsonrpc: '2.0',
+        id,
+        result
+      };
+    } catch (err) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Error executing ${targetTool} on session "${sessionId}": ${err.message}`
+            }
+          ]
+        }
+      };
+    }
   }
 
   throw new Error(`Method not found: ${method}`);

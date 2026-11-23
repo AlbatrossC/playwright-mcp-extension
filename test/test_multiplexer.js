@@ -20,7 +20,7 @@ if (!token) {
 
 const profile = process.env.PLAYWRIGHT_CHROME_PROFILE || 'Default';
 const browser = process.env.PLAYWRIGHT_BROWSER || 'chrome';
-const indexJs = path.resolve(__dirname, 'index.js');
+const indexJs = path.resolve(__dirname, '..', 'src', 'index.js');
 
 console.log('--- Starting Multi-Agent Window Isolation Test ---');
 console.log('Target Browser:       ', browser);

@@ -1,6 +1,25 @@
 # Playwright MCP Extension: Changelog & Architecture Guide
 
-## Latest Release: Interaction & Background Automation Improvements (v1.2.0)
+## Latest Release: Parallel Multi-Tab Extraction (v1.3.0)
+
+This update adds parallel multi-tab web extraction (`browser_multi_tab_extract`) for fast search & research workflows while preserving strict per-session Chrome window isolation:
+
+### 1. New First-Class Tool: `browser_multi_tab_extract` (19 Tools Total)
+- **What was added**: `browser_multi_tab_extract` in `src/tools.js`, `src/index.js`, and `extension/src/multiTabExtract.ts`.
+- **Two extraction modes**:
+  - **`serp`**: Extracts up to 8 organic results (`title`, `url`, `snippet`) across Google, DuckDuckGo, and Bing, plus automatic CAPTCHA/rate-limit detection (`captchaDetected`).
+  - **`page_text`**: Extracts `title`, `finalUrl`, cleaned `innerText` (capped by `max_chars`), and key navigation links (`/about`, `/courses`, `/careers`, `/pricing`, `/contact`, etc.).
+- **Parallelism & resilience**: Opens up to 6 background tabs (`active: false`) concurrently via `Promise.all`, races each tab against `timeout_ms` (still extracting available DOM if third-party trackers stall), and closes temporary tabs automatically (`close_tabs: true`).
+
+### 2. Dedicated Session Window Guarantee & Satellite Forwarding
+- **Lazy-window initialization**: `src/index.js` tracks `session.windowInitialized` and ensures the session's dedicated Chrome window is created (`browser_tabs` list) before dispatching `multiTabExtract`, preventing tabs from ever opening in the user's personal active window.
+- **Extension isolation fallback**: `multiTabExtract.ts` creates and cleans up a temporary isolated Chrome window if `windowId` is ever `undefined`.
+- **Satellite mode support**: Added `POST /multi-tab-extract` on `127.0.0.1:45454` so satellite multiplexers forward multi-tab requests seamlessly through the primary control plane.
+- **Permissions**: Added `"scripting"` to `extension/manifest.json` (`v0.9.8`) for MV3 `chrome.scripting.executeScript` extraction without `chrome.debugger` attach overhead.
+
+---
+
+## Previous Release: Interaction & Background Automation Improvements (v1.2.0)
 
 This update delivers four major enhancements for multi-agent browser automation:
 

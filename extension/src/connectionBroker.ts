@@ -308,6 +308,21 @@ export class ConnectionBroker {
     }));
   }
 
+  getWindowIdForSession(sessionName?: string): number | undefined {
+    if (sessionName) {
+      for (const [, session] of this._sessions) {
+        if (session.options.clientName === sessionName)
+          return session.windowId;
+      }
+      for (const [, session] of this._sessions) {
+        if (session.options.clientName?.includes(sessionName))
+          return session.windowId;
+      }
+    }
+    const all = [...this._sessions.values()];
+    return all.length ? all[all.length - 1].windowId : undefined;
+  }
+
   private _didChangeActivity(): void {
     this._listeners.setEnabled(
       this._sessions.size > 0 || this._relayUrls.size > 0

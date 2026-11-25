@@ -105,6 +105,46 @@ const customTools = [
       },
       required: ['session_id', 'action_name']
     }
+  },
+  {
+    name: 'browser_multi_tab_extract',
+    description: 'Open multiple URLs in parallel inside the session Chrome window, extract SERP results or clean page text concurrently, close the temporary tabs, and return one combined JSON payload.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Unique agent session ID.'
+        },
+        urls: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of up to 6 URLs to open and extract in parallel.'
+        },
+        extract_mode: {
+          type: 'string',
+          enum: ['serp', 'page_text'],
+          description: '"serp" extracts top organic search results + CAPTCHA status; "page_text" extracts clean body text + key navigation links. Defaults to "serp".'
+        },
+        max_chars: {
+          type: 'number',
+          description: 'Max characters of page_text to return per tab (default 4000, max 15000).'
+        },
+        wait_ms: {
+          type: 'number',
+          description: 'Extra settle delay in ms after load complete (default 400).'
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'Per-tab load timeout in ms (default 10000).'
+        },
+        close_tabs: {
+          type: 'boolean',
+          description: 'Close temporary tabs after extraction (default true).'
+        }
+      },
+      required: ['session_id', 'urls']
+    }
   }
 ];
 

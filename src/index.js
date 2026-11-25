@@ -25,6 +25,8 @@ const { WebSocketServer } = require('ws');
 let extensionClient = null;
 const MAX_PENDING_CONNECT = 50;
 const pendingConnectRequests = [];
+const pendingMultiTabRequests = new Map();
+let multiTabSeq = 0;
 let isPrimaryMultiplexer = false;
 let controlHttpServer = null;
 let wss = null;
@@ -68,6 +70,25 @@ function startControlPlane() {
       });
       return;
     }
+    if (req.method === 'POST' && req.url === '/multi-tab-extract') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk;
+        if (body.length > 262144) req.destroy();
+      });
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const result = await dispatchMultiTabExtractLocal(data);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err.message }));
+        }
+      });
+      return;
+    }
     res.writeHead(404);
     res.end();
   });
@@ -97,6 +118,17 @@ function startControlPlane() {
           ws.send(JSON.stringify(item));
         } catch (_) {}
       }
+      ws.on('message', raw => {
+        try {
+          const msg = JSON.parse(raw.toString());
+          if (msg.type === 'multiTabExtractResult' && msg.requestId && pendingMultiTabRequests.has(msg.requestId)) {
+            const pending = pendingMultiTabRequests.get(msg.requestId);
+            pendingMultiTabRequests.delete(msg.requestId);
+            clearTimeout(pending.timer);
+            pending.resolve(msg.result);
+          }
+        } catch (_) {}
+      });
       ws.on('close', () => {
         if (extensionClient === ws) extensionClient = null;
       });
@@ -152,6 +184,7 @@ class PlaywrightSession {
     this.sessionId = sessionId;
     this.process = null;
     this.ready = false;
+    this.windowInitialized = false;
     this.readyPromise = null;
     this.pendingRequests = new Map();
     this.nextRequestId = 0;
@@ -359,6 +392,7 @@ class PlaywrightSession {
   stop() {
     clearTimeout(this._startupTimer);
     this.ready = false;
+    this.windowInitialized = false;
     this.readyPromise = null;
     this._initResolve = null;
     this._initReject = null;
@@ -403,6 +437,76 @@ process.on('exit', () => {
     session.stop();
   }
 });
+
+// Multi-tab extract dispatch (primary WS or satellite HTTP -> primary)
+async function dispatchMultiTabExtractLocal(payload) {
+  if (!extensionClient || extensionClient.readyState !== 1) {
+    throw new Error('Chrome extension is not connected to control plane on port 45454. Reload the extension in Chrome.');
+  }
+  const requestId = `mt_${Date.now()}_${++multiTabSeq}`;
+  const overallTimeout = Math.min(Math.max((payload.timeoutMs || 10000) + 10000, 15000), 45000);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingMultiTabRequests.delete(requestId);
+      reject(new Error(`multiTabExtract timed out after ${overallTimeout}ms`));
+    }, overallTimeout);
+
+    pendingMultiTabRequests.set(requestId, { resolve, reject, timer });
+    try {
+      extensionClient.send(JSON.stringify({
+        type: 'multiTabExtract',
+        requestId,
+        ...payload
+      }));
+    } catch (err) {
+      pendingMultiTabRequests.delete(requestId);
+      clearTimeout(timer);
+      reject(err);
+    }
+  });
+}
+
+async function dispatchMultiTabExtract(payload) {
+  if (isPrimaryMultiplexer) {
+    return dispatchMultiTabExtractLocal(payload);
+  }
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: 45454,
+      path: '/multi-tab-extract',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      },
+      timeout: Math.min(Math.max((payload.timeoutMs || 10000) + 12000, 15000), 50000)
+    }, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (res.statusCode >= 400) {
+            return reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
+          }
+          resolve(parsed);
+        } catch (e) {
+          reject(new Error(`Invalid response from primary control plane: ${e.message}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Satellite request to primary /multi-tab-extract timed out'));
+    });
+    req.write(body);
+    req.end();
+  });
+}
 
 // Get or auto-create a session
 async function getSession(sessionId) {
@@ -545,6 +649,7 @@ async function handleMcpRequest(req) {
     }
 
     const sessionId = args.session_id || 'default';
+    // Ensure session window is started/connected before forwarding
     let session;
     try {
       session = await getSession(sessionId);
@@ -562,6 +667,50 @@ async function handleMcpRequest(req) {
           ]
         }
       };
+    }
+
+    if (name === 'browser_multi_tab_extract') {
+      try {
+        if (!session.windowInitialized) {
+          await session.callTool('browser_tabs', { action: 'list' }, 30000);
+          session.windowInitialized = true;
+        }
+        const result = await dispatchMultiTabExtract({
+          sessionId,
+          urls: Array.isArray(args.urls) ? args.urls : [],
+          extractMode: args.extract_mode || 'serp',
+          maxChars: args.max_chars,
+          waitMs: args.wait_ms,
+          timeoutMs: args.timeout_ms,
+          closeTabs: args.close_tabs
+        });
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2)
+              }
+            ]
+          }
+        };
+      } catch (err) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `Error executing browser_multi_tab_extract on session "${sessionId}": ${err.message}`
+              }
+            ]
+          }
+        };
+      }
     }
 
     // Forward to dedicated Playwright MCP session
@@ -589,6 +738,9 @@ async function handleMcpRequest(req) {
 
     try {
       const result = await session.callTool(targetTool, targetArgs, timeout);
+      if (!result.isError) {
+        session.windowInitialized = true;
+      }
 
       // If the browser was closed, also release the session cleanly
       if (targetTool === 'browser_close') {

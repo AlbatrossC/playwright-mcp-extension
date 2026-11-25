@@ -17,6 +17,7 @@
 
 import { ChromeListeners } from './chromeListeners';
 import { ConnectionBroker } from './connectionBroker';
+import { runMultiTabExtract } from './multiTabExtract';
 import { TabGroupManager } from './tabGroupManager';
 import { TabPicker } from './tabPicker';
 import { TabRegistry } from './tabRegistry';
@@ -84,6 +85,17 @@ class Extension {
           if (msg.type === 'connectDirect') {
             await this._ready;
             await this._broker.connectDirect(msg.relayUrl, msg.options || { clientName: 'Agent', background: false });
+          } else if (msg.type === 'multiTabExtract') {
+            await this._ready;
+            const windowId = this._broker.getWindowIdForSession(msg.sessionId);
+            const result = await runMultiTabExtract(msg, windowId);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'multiTabExtractResult',
+                requestId: msg.requestId,
+                result
+              }));
+            }
           }
         } catch (err) {
           console.error('[Playwright Extension] Control plane error:', err);

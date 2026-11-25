@@ -411,6 +411,21 @@ class ConnectionBroker {
       windowId: session.windowId
     }));
   }
+  getWindowIdForSession(sessionName) {
+    var _a;
+    if (sessionName) {
+      for (const [, session] of this._sessions) {
+        if (session.options.clientName === sessionName)
+          return session.windowId;
+      }
+      for (const [, session] of this._sessions) {
+        if ((_a = session.options.clientName) == null ? void 0 : _a.includes(sessionName))
+          return session.windowId;
+      }
+    }
+    const all = [...this._sessions.values()];
+    return all.length ? all[all.length - 1].windowId : void 0;
+  }
   _didChangeActivity() {
     this._listeners.setEnabled(
       this._sessions.size > 0 || this._relayUrls.size > 0
@@ -461,6 +476,206 @@ class ConnectionBroker {
     if (!tabs.some((tab) => tab.id === connectTabId))
       await chrome.tabs.remove(connectTabId).catch(() => {
       });
+  }
+}
+function waitForTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      resolve(outcome);
+    };
+    const onUpdated = (updatedId, changeInfo) => {
+      if (updatedId === tabId && changeInfo.status === "complete")
+        done("complete");
+    };
+    const onRemoved = (removedId) => {
+      if (removedId === tabId)
+        done("timeout");
+    };
+    const timer = setTimeout(() => done("timeout"), timeoutMs);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    void chrome.tabs.get(tabId).then((tab) => {
+      if (tab.status === "complete")
+        done("complete");
+    }).catch(() => done("timeout"));
+  });
+}
+function extractSerpInPage(maxResults) {
+  var _a, _b;
+  const href = window.location.href;
+  const title = document.title || "";
+  const bodyText = (((_a = document.body) == null ? void 0 : _a.innerText) || "").slice(0, 3e3);
+  const captchaDetected = href.includes("/sorry/") || Boolean(document.querySelector('#captcha-form, .g-recaptcha, iframe[src*="recaptcha"], iframe[src*="hcaptcha"]')) || /unusual traffic from your computer|verify you are human|are you a robot|please show you're not a robot/i.test(bodyText);
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  const pushItem = (t, u, s) => {
+    const cleanUrl = (u || "").trim();
+    const cleanTitle = (t || "").trim();
+    if (!cleanUrl || !cleanTitle || !cleanUrl.startsWith("http") || seen.has(cleanUrl)) return;
+    seen.add(cleanUrl);
+    items.push({
+      title: cleanTitle.slice(0, 200),
+      url: cleanUrl,
+      snippet: (s || "").replace(/\s+/g, " ").trim().slice(0, 400)
+    });
+  };
+  if (href.includes("google.")) {
+    const blocks = document.querySelectorAll("div.g, div.MjjYud");
+    for (const block of blocks) {
+      const a = block.querySelector('a[href^="http"]');
+      const h3 = block.querySelector("h3");
+      const snip = block.querySelector("div.VwiC3b, span.aCOpRe, div[data-sncf]");
+      if (a && h3)
+        pushItem(h3.textContent, a.getAttribute("href"), snip == null ? void 0 : snip.textContent);
+      if (items.length >= maxResults) break;
+    }
+  } else if (href.includes("duckduckgo.com")) {
+    const blocks = document.querySelectorAll('.result, article[data-testid="result"], .web-result');
+    for (const block of blocks) {
+      const a = block.querySelector('a.result__a, a[data-testid="result-title-a"], h2 a');
+      const snip = block.querySelector('.result__snippet, [data-result="snippet"]');
+      if (a)
+        pushItem(a.textContent, a.href, snip == null ? void 0 : snip.textContent);
+      if (items.length >= maxResults) break;
+    }
+  } else if (href.includes("bing.com")) {
+    const blocks = document.querySelectorAll("li.b_algo");
+    for (const block of blocks) {
+      const a = block.querySelector("h2 a");
+      const snip = block.querySelector(".b_caption p, p.b_lineclamp2, p.b_lineclamp3, p.b_lineclamp4");
+      if (a)
+        pushItem(a.textContent, a.href, snip == null ? void 0 : snip.textContent);
+      if (items.length >= maxResults) break;
+    }
+  }
+  if (items.length === 0 && !captchaDetected) {
+    const links = document.querySelectorAll('main a[href^="http"], #search a[href^="http"]');
+    for (const a of links) {
+      const h = a.querySelector("h2, h3") || a;
+      pushItem(h.textContent, a.href, (_b = a.parentElement) == null ? void 0 : _b.textContent);
+      if (items.length >= maxResults) break;
+    }
+  }
+  return { finalUrl: href, title, captchaDetected, results: items };
+}
+function extractPageTextInPage(maxChars) {
+  var _a;
+  const href = window.location.href;
+  const title = document.title || "";
+  const rawText = (((_a = document.body) == null ? void 0 : _a.innerText) || "").replace(/\n{3,}/g, "\n\n").trim();
+  const captchaDetected = /verify you are human|checking your browser|access denied|just a moment/i.test(rawText.slice(0, 1200));
+  const navLinks = [];
+  const seen = /* @__PURE__ */ new Set();
+  const interesting = /about|course|training|bootcamp|program|career|job|contact|pricing|fee|placement/i;
+  for (const a of document.querySelectorAll("a[href]")) {
+    const anchor = a;
+    const text = (anchor.innerText || "").replace(/\s+/g, " ").trim();
+    const url = anchor.href;
+    if (!url || !url.startsWith("http") || seen.has(url)) continue;
+    if (interesting.test(text) || interesting.test(url)) {
+      seen.add(url);
+      navLinks.push({ text: text.slice(0, 80), url });
+      if (navLinks.length >= 15) break;
+    }
+  }
+  return {
+    finalUrl: href,
+    title,
+    captchaDetected,
+    text: rawText.slice(0, maxChars),
+    navLinks
+  };
+}
+async function runMultiTabExtract(req, windowId) {
+  const started = Date.now();
+  const urls = Array.isArray(req.urls) ? req.urls.slice(0, 6) : [];
+  if (urls.length === 0) {
+    return { ok: false, durationMs: 0, captchaDetected: false, items: [], error: "No URLs provided" };
+  }
+  const extractMode = req.extractMode === "page_text" ? "page_text" : "serp";
+  const maxChars = Math.min(Math.max(req.maxChars ?? 4e3, 500), 15e3);
+  const waitMs = Math.min(Math.max(req.waitMs ?? 400, 0), 5e3);
+  const timeoutMs = Math.min(Math.max(req.timeoutMs ?? 1e4, 2e3), 3e4);
+  const closeTabs = req.closeTabs !== false;
+  const createdTabIds = [];
+  let tempWindowId;
+  let targetWindowId = windowId;
+  try {
+    if (targetWindowId === void 0) {
+      const win = await chrome.windows.create({ url: "about:blank", focused: false, type: "normal" });
+      tempWindowId = win == null ? void 0 : win.id;
+      targetWindowId = tempWindowId;
+    }
+    const items = await Promise.all(
+      urls.map(async (url) => {
+        var _a;
+        let tab;
+        try {
+          tab = await chrome.tabs.create({
+            ...targetWindowId !== void 0 ? { windowId: targetWindowId } : {},
+            url,
+            active: false
+          });
+          if (!tab.id) {
+            return { url, status: "error", error: "Failed to create tab" };
+          }
+          createdTabIds.push(tab.id);
+          const loadOutcome = await waitForTabComplete(tab.id, timeoutMs);
+          if (waitMs > 0)
+            await new Promise((r) => setTimeout(r, waitMs));
+          const execResults = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: extractMode === "page_text" ? extractPageTextInPage : extractSerpInPage,
+            args: [extractMode === "page_text" ? maxChars : 8]
+          });
+          const payload = (_a = execResults == null ? void 0 : execResults[0]) == null ? void 0 : _a.result;
+          if (!payload) {
+            return {
+              url,
+              status: loadOutcome === "timeout" ? "timeout" : "error",
+              error: "No script result returned"
+            };
+          }
+          return {
+            url,
+            finalUrl: payload.finalUrl,
+            title: payload.title,
+            status: loadOutcome === "timeout" ? "timeout" : "ok",
+            captchaDetected: Boolean(payload.captchaDetected),
+            ...payload.results ? { results: payload.results } : {},
+            ...payload.text !== void 0 ? { text: payload.text } : {},
+            ...payload.navLinks ? { navLinks: payload.navLinks } : {}
+          };
+        } catch (err) {
+          return {
+            url,
+            status: "error",
+            error: (err == null ? void 0 : err.message) ?? String(err)
+          };
+        }
+      })
+    );
+    return {
+      ok: true,
+      durationMs: Date.now() - started,
+      captchaDetected: items.some((i) => i.captchaDetected),
+      items
+    };
+  } finally {
+    if (closeTabs && createdTabIds.length > 0) {
+      await chrome.tabs.remove(createdTabIds).catch(() => {
+      });
+    }
+    if (closeTabs && tempWindowId !== void 0) {
+      await chrome.windows.remove(tempWindowId).catch(() => {
+      });
+    }
   }
 }
 const CLIENT_COLORS = ["green", "blue", "purple", "orange", "pink", "cyan", "yellow", "red"];
@@ -910,6 +1125,17 @@ class Extension {
           if (msg.type === "connectDirect") {
             await this._ready;
             await this._broker.connectDirect(msg.relayUrl, msg.options || { clientName: "Agent", background: false });
+          } else if (msg.type === "multiTabExtract") {
+            await this._ready;
+            const windowId = this._broker.getWindowIdForSession(msg.sessionId);
+            const result = await runMultiTabExtract(msg, windowId);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: "multiTabExtractResult",
+                requestId: msg.requestId,
+                result
+              }));
+            }
           }
         } catch (err) {
           console.error("[Playwright Extension] Control plane error:", err);

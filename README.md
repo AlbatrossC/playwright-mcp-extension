@@ -119,7 +119,7 @@ When the agent is done:
 }
 ```
 
-## Essential Tools (18 Curated Tools)
+## Essential Tools (19 Curated Tools)
 
 Every tool accepts `session_id` to route commands to its dedicated Chrome window.
 
@@ -142,9 +142,12 @@ Every tool accepts `session_id` to route commands to its dedicated Chrome window
 | `browser_file_upload` | Files | Uploads local files into an active file chooser dialog. | `paths` |
 | `browser_wait_for` | Sync | Waits for text, an element selector, or a time delay. | `text`, `target` / `ref`, `time`, `include_snapshot` |
 | `browser_evaluate` | Scripting | Evaluates a JavaScript function expression in the page context. | `function`, `target` / `ref` |
+| `browser_multi_tab_extract` | Research | Opens up to 6 URLs in parallel inside the session window, extracts SERP results or clean page text, and closes temporary tabs. | `urls`, `extract_mode` (`"serp"` / `"page_text"`), `max_chars`, `timeout_ms`, `close_tabs` |
 | `browser_run_action` | Escape Hatch | Dynamic safety-valve to invoke any other native Playwright MCP tool. | `action_name`, `args`, `include_snapshot` |
 
 ### High-Performance Capabilities
+
+- **Parallel Multi-Tab Extraction (`browser_multi_tab_extract`)**: Open 3–6 URLs concurrently inside the agent's dedicated Chrome window in a single MCP call. Supports `"serp"` mode (extracts top organic Google/DuckDuckGo/Bing results + CAPTCHA detection) and `"page_text"` mode (extracts clean body text + key navigation links) with per-tab timeouts and automatic tab cleanup.
 
 - **Inline Snapshots (`include_snapshot: true`)**: Pass `include_snapshot: true` to any interaction tool (`browser_click`, `browser_type`, `browser_press_key`, `browser_navigate`, `browser_handle_dialog`). The response immediately includes the post-action accessibility tree, cutting tool roundtrips and latency by 50%.
 - **Native Press-and-Hold (`delay`)**: Pass `delay: 1000` to `browser_click` to hold the mouse button down for 1 second before releasing. No manual mouse down/up scripting required.

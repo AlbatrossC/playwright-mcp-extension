@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Playwright Extension",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "description": "Connect your browser to AI agents through Playwright MCP server and CLI. Enables AI-driven web testing, debugging, and automation.",
   "permissions": [
     "debugger",
     "activeTab",
     "tabs",
     "tabGroups",
+    "scripting",
     "storage",
     "alarms"
   ],

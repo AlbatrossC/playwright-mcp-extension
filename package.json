@@ -1,6 +1,6 @@
 {
   "name": "playwright-mcp-extension",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "Multi-Agent Physical Window Isolation for Playwright MCP in Chrome",
   "main": "src/index.js",
   "bin": {
